@@ -742,7 +742,7 @@ class Trade:
 
 class _Broker:
     def __init__(self, *, data, cash, spread, commission, margin,
-                 trade_on_close, hedging, exclusive_orders, index):
+                 trade_on_close, hedging, exclusive_orders, index, intrabar):
         assert cash > 0, f"cash should be > 0, is {cash}"
         assert 0 < margin <= 1, f"margin should be between 0 and 1, is {margin}"
         self._data: _Data = data
@@ -766,6 +766,7 @@ class _Broker:
         self._trade_on_close = trade_on_close
         self._hedging = hedging
         self._exclusive_orders = exclusive_orders
+        self._intrabar = intrabar
 
         self._equity = np.tile(np.nan, len(index))
         self.orders: List[Order] = []
@@ -1024,15 +1025,8 @@ class _Broker:
                         reprocess_orders = True
                     elif (low <= (order.sl or -np.inf) <= high or
                           low <= (order.tp or -np.inf) <= high):
-                        warnings.warn(
-                            f"({data.index[-1]}) A contingent SL/TP order would execute in the "
-                            "same bar its parent stop/limit order was turned into a trade. "
-                            "Since we can't assert the precise intra-candle "
-                            "price movement, the affected SL/TP order will instead be executed on "
-                            "the next (matching) price/bar, making the result (of this trade) "
-                            "somewhat dubious. "
-                            "See https://github.com/kernc/backtesting.py/issues/119",
-                            UserWarning)
+                        if self._intrabar:
+                            reprocess_orders = True
 
             # Order processed
             self.orders.remove(order)
@@ -1170,6 +1164,12 @@ class Backtest:
     [active and ongoing] at the end of the backtest will be closed on
     the last bar and will contribute to the computed backtest statistics.
 
+    If `intrabar` is `True`, allows intrabar order processing
+    (i.e. multiple orders being filled within the same bar).
+    This is an experimental feature that may lead to non-deterministic
+    results depending on the order of operations within a bar.
+    Use with caution.
+
     .. tip:: Fractional trading
         See also `backtesting.lib.FractionalBacktest` if you want to trade
         fractional units (of e.g. bitcoin).
@@ -1189,6 +1189,7 @@ class Backtest:
                  hedging=False,
                  exclusive_orders=False,
                  finalize_trades=False,
+                 intrabar=False
                  ):
         if not (isinstance(strategy, type) and issubclass(strategy, Strategy)):
             raise TypeError('`strategy` must be a Strategy sub-type')
@@ -1248,6 +1249,7 @@ class Backtest:
             _Broker, cash=cash, spread=spread, commission=commission, margin=margin,
             trade_on_close=trade_on_close, hedging=hedging,
             exclusive_orders=exclusive_orders, index=data.index,
+            intrabar=intrabar,
         )
         self._strategy = strategy
         self._results: Optional[pd.Series] = None
